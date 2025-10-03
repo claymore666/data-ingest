@@ -1,14 +1,172 @@
 # Testing Guide
 
-This guide covers how to run tests for the CETI data ingestion tools, both locally and in CI/CD.
+This guide covers how to test the CETI data ingestion tools locally, including both S3 operations (using LocalStack) and whale tag workflows (using a Docker simulator).
 
-## Overview
+## Whale Tag Simulator
 
-The project uses **LocalStack** to emulate AWS S3 locally, allowing you to test without real AWS credentials.
+The whale tag simulator allows you to test `ceti whaletag` commands locally without physical hardware.
 
-## Quick Start
+### Quick Start
 
-### Local Testing (Developers)
+```bash
+# Start the simulator
+make whaletag-up
+
+# Run automated tests
+make test-whaletag
+
+# Stop the simulator
+make whaletag-down
+```
+
+### Manual Testing
+
+```bash
+# Start simulator
+make whaletag-up
+
+# Get container IP
+CONTAINER_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' wt-b827eb123456)
+
+# Test SSH connection
+ssh pi@$CONTAINER_IP
+# Password: ceticeti
+
+# Inside the container, check test data
+ls -la /data
+
+# Exit SSH
+exit
+
+# Test with ceti whaletag command
+ceti whaletag -t $CONTAINER_IP
+
+# Stop simulator
+make whaletag-down
+```
+
+### What Gets Simulated
+
+The simulator creates a Docker container with:
+- **Base Image**: Alpine Linux (~12 MB)
+- **Network**: Docker bridge network (container gets its own IP)
+- **SSH Server**: OpenSSH on port 22
+- **User**: `pi` with password `ceticeti`
+- **Hostname**: `wt-b827eb123456` (configurable via `.env.whaletag`)
+- **Test Data**: Sample files in `/data/`:
+  - Audio files (`.raw`, `.flac`)
+  - Sensor data (CSV files)
+
+### Configuration
+
+Edit `.env.whaletag` to customize:
+
+```bash
+# Hostname of the simulated whale tag
+WHALETAG_HOSTNAME=wt-b827eb123456
+
+# SSH password for user 'pi'
+WHALETAG_PASSWORD=ceticeti
+
+# Network mode (bridge, host, or macvlan)
+NETWORK_MODE=bridge
+```
+
+**Network Modes:**
+- **bridge** (default): Container gets Docker bridge IP, accessible from host via container IP
+- **host**: Container shares host network (may conflict with host SSH on port 22)
+- **macvlan** (advanced): Container gets real LAN IP via DHCP, discoverable by `ceti whaletag -l` from other machines
+
+### Whale Tag Test Coverage
+
+The whale tag integration tests verify:
+- SSH connection to simulated tag
+- Hostname pattern validation (`wt-*`)
+- `/data` directory exists
+- Test files present in `/data`
+- SFTP file download
+- User permissions for `pi` user
+
+### Limitations
+
+**What the simulator CAN test:**
+- SSH/SFTP connectivity
+- File download workflows (`ceti whaletag -t <IP>`)
+- Hostname validation
+- Data cleaning operations
+
+**What the simulator CANNOT test (bridge mode):**
+- Network discovery (`ceti whaletag -l` won't find containers on Docker bridge network)
+- Real sensor data capture
+- Actual whale tag firmware behavior
+- Hardware-specific features
+
+**Note:** In bridge mode (default), you must use `ceti whaletag -t <container-ip>` to connect directly. The `-l` discovery flag scans your LAN and won't find Docker bridge containers. For LAN discovery testing, use macvlan mode (see `.env.whaletag` configuration).
+
+### Whale Tag Troubleshooting
+
+**Simulator won't start:**
+```bash
+# Check Docker is running
+docker ps
+
+# View simulator logs
+docker logs wt-b827eb123456
+```
+
+**Cannot connect via SSH:**
+```bash
+# Ensure simulator is running
+docker ps | grep wt-b827eb123456
+
+# Get container IP
+docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' wt-b827eb123456
+
+# Check SSH server status inside container
+docker exec wt-b827eb123456 ps aux | grep sshd
+```
+
+**Clean start:**
+```bash
+# Remove all simulator data and restart
+make whaletag-clean
+make whaletag-up
+```
+
+### Advanced Whale Tag Usage
+
+**Access simulator shell:**
+```bash
+docker exec -it wt-b827eb123456 /bin/bash
+```
+
+**View container logs:**
+```bash
+docker logs wt-b827eb123456
+```
+
+**Inspect test data:**
+```bash
+docker exec wt-b827eb123456 ls -la /data
+```
+
+**Test whale tag commands:**
+```bash
+# Get container IP
+CONTAINER_IP=$(docker inspect -f '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}' wt-b827eb123456)
+
+# Download data from tag
+ceti whaletag -t $CONTAINER_IP
+
+# Clean tag (destructive - removes all /data files)
+ceti whaletag -ct $CONTAINER_IP
+```
+
+## LocalStack S3 Testing
+
+The project uses **LocalStack** to emulate AWS S3 locally, allowing you to test S3 operations without real AWS credentials.
+
+### Quick Start
 
 ```bash
 # One-time setup
@@ -24,7 +182,7 @@ That's it! The `make test-local` command:
 3. Runs pytest
 4. Stops LocalStack
 
-### Manual Testing (Advanced)
+### Manual LocalStack Testing
 
 ```bash
 # Create and activate virtual environment (first time only)
@@ -132,6 +290,15 @@ Located in `tests/test_integration_*.py`:
 - Device ID validation
 - Epoch timestamp renaming
 
+### Whale Tag Integration Tests
+
+Located in `tests/test_whaletag_integration.py`:
+- SSH connection to simulated tag
+- Hostname pattern validation
+- Data directory validation
+- SFTP file download
+- User permissions
+
 ### Test Fixtures
 
 Defined in `tests/conftest.py`:
@@ -142,8 +309,14 @@ Defined in `tests/conftest.py`:
 ## Running Specific Tests
 
 ```bash
-# Run all tests
+# Run all tests (excludes whale tag tests by default)
 pytest
+
+# Run only whale tag tests
+pytest -m whaletag
+
+# Run all tests including whale tag
+pytest -m ""
 
 # Run specific test file
 pytest tests/test_s3upload.py
@@ -165,7 +338,7 @@ LocalStack Free Tier supports S3 and other basic AWS services, which is sufficie
 **Supported with LocalStack:**
 - ✅ `ceti s3upload` - S3 upload with deduplication
 - ✅ `ceti general_offload` - File offloading and S3 upload
-- ✅ All pytest tests (S3-based)
+- ✅ All pytest S3 tests
 
 **Not supported (requires real AWS or LocalStack Pro):**
 - ❌ `ceti datapipeline` - Requires EMR (Elastic MapReduce)
@@ -217,6 +390,8 @@ make localstack-down
 
 ## Writing New Tests
 
+### S3 Tests
+
 When adding new tests that interact with S3:
 
 ```python
@@ -239,6 +414,21 @@ The fixtures handle:
 - Creating S3 client with correct endpoint
 - Creating test bucket
 - Cleaning up after tests
+
+### Whale Tag Tests
+
+When adding whale tag tests, use the `@pytest.mark.whaletag` marker:
+
+```python
+@pytest.mark.whaletag
+def test_my_whale_tag_feature(ssh_client):
+    """Test description"""
+    # ssh_client fixture provides authenticated connection
+    stdin, stdout, stderr = ssh_client.exec_command('ls /data')
+    files = stdout.read().decode().strip().split('\n')
+
+    assert len(files) > 0
+```
 
 ## Additional Resources
 
