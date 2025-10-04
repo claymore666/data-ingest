@@ -1,4 +1,4 @@
-# Whale Tag Simulator Docker Image
+# Whale Tag Mockup Docker Image
 # Pre-installs SSH server and utilities for network configuration
 
 FROM alpine:latest
@@ -8,18 +8,23 @@ RUN apk add --no-cache \
         openssh-server \
         dhcpcd \
         bash \
+        python3 \
+        sudo \
         && \
     # Pre-configure SSH
     ssh-keygen -A && \
     sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     # Create SSH runtime directory
-    mkdir -p /run/sshd
+    mkdir -p /run/sshd && \
+    # Configure sudo for passwordless access (for ceti whaletag -ct command)
+    echo "pi ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
 # Create data directory
 RUN mkdir -p /data && chmod 755 /data
 
 COPY scripts/init-whaletag.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+COPY scripts/generate-syslog.py /generate-syslog.py
+RUN chmod +x /docker-entrypoint.sh /generate-syslog.py
 
 CMD ["/bin/bash", "/docker-entrypoint.sh"]

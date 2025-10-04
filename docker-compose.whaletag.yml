@@ -1,9 +1,9 @@
 services:
-  whaletag-simulator:
+  whaletag-mockup:
     build:
       context: .
       dockerfile: Dockerfile.whaletag
-    image: ceti-whaletag-simulator:latest
+    image: ceti-whaletag-mockup:latest
     container_name: ${WHALETAG_HOSTNAME:-wt-b827eb123456}
     hostname: ${WHALETAG_HOSTNAME:-wt-b827eb123456}
     environment:
@@ -12,6 +12,7 @@ services:
       - NETWORK_MODE=${NETWORK_MODE:-bridge}
     volumes:
       - whaletag-data:/data
+      - whaletag-backup:/backup
       - ./scripts/init-whaletag.sh:/docker-entrypoint.sh
     command: /bin/sh /docker-entrypoint.sh
     # Network configuration depends on NETWORK_MODE in .env.whaletag
@@ -39,6 +40,7 @@ services:
 
 volumes:
   whaletag-data:
+  whaletag-backup:
 
 networks:
   # Default bridge network (for bridge mode)
